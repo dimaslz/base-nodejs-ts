@@ -23,7 +23,7 @@ jobs:
           app_host: dimaslz.dev
           app_name: node-api
           static: false
-          app_ports: {{ PORT }}
+          app_ports: 4000
           dockerfile: ./b.Dockerfile
           env: |
             PORT=4000
