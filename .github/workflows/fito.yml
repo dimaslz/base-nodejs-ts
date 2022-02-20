@@ -20,13 +20,12 @@ jobs:
           server_ip: ${{ secrets.CONNECTION_HOST }}
           user: ${{ secrets.CONNECTION_USER }}
           ssh_private_key: ${{ secrets.CONNECTION_PRIVATE_KEY }}
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          dockerfile: ./b.Dockerfile
-          static: true
           app_host: dimaslz.dev
           app_name: node-api
-          app_ports: 4000
+          static: true
+          dockerfile: ./b.Dockerfile
           env: |
-            NODE_ENV=production
-            DUMMY=DUMMY DEMO TEXT
             PORT=4000
+            DUMMY=DUMMY DEMO TEXT
+            NODE_ENV=production
+            
