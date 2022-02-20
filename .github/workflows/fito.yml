@@ -22,7 +22,8 @@ jobs:
           ssh_private_key: ${{ secrets.CONNECTION_PRIVATE_KEY }}
           app_host: dimaslz.dev
           app_name: node-api
-          static: true
+          static: false
+          app_ports: {{ PORT }}
           dockerfile: ./b.Dockerfile
           env: |
             PORT=4000
