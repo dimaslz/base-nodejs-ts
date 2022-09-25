@@ -1,34 +1,143 @@
-on:
-  push:
-    branches: [master]
-
-name: 🚀 Deploy with Fito
-jobs:
-  deploy:
-    name: 🎉 Deploy
-    runs-on: ubuntu-latest
-    concurrency:
-      group: ${{ github.workflow }}-${{ github.ref }}
-      cancel-in-progress: false
-    steps:
-      - name: 🚚 Get latest code
-        uses: actions/checkout@master
-        with:
-          fetch-depth: 0
-
-      - name: GO!
-        uses: dimaslz/fito-deploy-action@beta
-        with:
-          server_ip: ${{ secrets.FITO_ENV_CONNECTION_HOST }}
-          user: ${{ secrets.FITO_ENV_CONNECTION_USER }}
-          ssh_private_key: ${{ secrets.FITO_ENV_CONNECTION_PRIVATE_KEY }}
-          app_host: dimaslz.dev
-          app_name: node-api
-          static: false
-          app_ports: 4000
-          dockerfile: ./b.Dockerfile
-          env: |
-            NODE_ENV=production
-            DUMMY=DUMMY DEMO TEXT
-            PORT=4000
-            
+---
+  name: "DEPLOY"
+  on: 
+    push: 
+      branches: 
+        - "master"
+  concurrency: 
+    group: "${{ github.workflow }}-${{ github.ref }}"
+    cancel-in-progress: false
+  env: 
+    SSH_USER: "${{ secrets.FITO_ENV_CONNECTION_USER }}"
+    SSH_KEY: "${{ secrets.FITO_ENV_CONNECTION_PRIVATE_KEY }}"
+    SSH_HOST: "${{ secrets.FITO_ENV_CONNECTION_HOST }}"
+    ATTEMPTS: "${{ github.run_attempt }}"
+  jobs: 
+    install-dependencies: 
+      name: "install dependencies"
+      runs-on: "ubuntu-latest"
+      steps: 
+        - 
+          name: "Checkout under $GITHUB_WORKSPACE"
+          uses: "actions/checkout@master"
+          with: 
+            ref: "master"
+        - 
+          name: "Set up NodeJS"
+          uses: "actions/setup-node@master"
+          with: 
+            node-version: "16.15.1"
+        - 
+          name: "Install yarn"
+          run: "npm install -g yarn"
+        - 
+          name: "Install dependencies"
+          run: "yarn install"
+        - 
+          name: "Cache"
+          uses: "actions/cache@main"
+          with: 
+            path: "./*"
+            key: "${{ github.sha }}-cache"
+    build-application: 
+      name: "build application"
+      runs-on: "ubuntu-latest"
+      needs: "install-dependencies"
+      steps: 
+        - 
+          name: "Set up NodeJS"
+          uses: "actions/setup-node@master"
+          with: 
+            node-version: "16.15.1"
+        - 
+          name: "Cache"
+          uses: "actions/cache@main"
+          with: 
+            path: "./*"
+            key: "${{ github.sha }}-cache"
+        - 
+          name: "Build application"
+          run: "yarn build"
+        - 
+          name: "Cache"
+          uses: "actions/cache@main"
+          with: 
+            path: "./*\n./build\n"
+            key: "${{ github.sha }}-cache"
+    create-and-push-docker-image: 
+      name: "create and push docker image"
+      runs-on: "ubuntu-latest"
+      needs: "build-application"
+      steps: 
+        - 
+          name: "Cache"
+          uses: "actions/cache@main"
+          with: 
+            path: "./*\n./build\n"
+            key: "${{ github.sha }}-cache"
+        - 
+          name: "Build docker image"
+          run: "wget https://statics.dimaslz.dev/fito/docker/dockerfile-simple-node.docker.tmpl -O Dockerfile.tmpl\n    export NODE_IMAGE=\"alpine\"\n    export ARGS=\"\"\n    export RUN_COMMAND=\"\\\"yarn\\\", \\\"start\\\"\"\n    export SOURCE=\"./build\"\n    export FILES=\"\"\n    envsubst < Dockerfile.tmpl > Dockerfile\n    docker build .  -t ${{ env.ATTEMPTS }}.${{ github.sha }}.base-nodejs-ts.d7r.io.production.image"
+        - 
+          name: "prepare connection"
+          run: "mkdir -p ~/.ssh/\necho \"$SSH_KEY\" > ~/.ssh/prod.key\nchmod 600 ~/.ssh/prod.key\ncat >>~/.ssh/config <<END\nHost prod\n  HostName $SSH_HOST\n  User $SSH_USER\n  IdentityFile ~/.ssh/prod.key\n  StrictHostKeyChecking no\nEND"
+        - 
+          name: "Cache"
+          uses: "actions/cache@main"
+          with: 
+            path: "./*\n./build\n"
+            key: "${{ github.sha }}-cache"
+        - 
+          name: "Push image"
+          run: "docker save ${{ env.ATTEMPTS }}.${{ github.sha }}.base-nodejs-ts.d7r.io.production.image | bzip2 | ssh prod 'docker load'"
+    run-image-and-clean: 
+      name: "run image and clean"
+      runs-on: "ubuntu-latest"
+      needs: "create-and-push-docker-image"
+      steps: 
+        - 
+          name: "Cache"
+          uses: "actions/cache@main"
+          with: 
+            path: "./*\n./build\n"
+            key: "${{ github.sha }}-cache"
+        - 
+          name: "prepare connection"
+          run: "mkdir -p ~/.ssh/\necho \"$SSH_KEY\" > ~/.ssh/prod.key\nchmod 600 ~/.ssh/prod.key\ncat >>~/.ssh/config <<END\nHost prod\n  HostName $SSH_HOST\n  User $SSH_USER\n  IdentityFile ~/.ssh/prod.key\n  StrictHostKeyChecking no\nEND"
+        - 
+          name: "get current currentContainerId"
+          run: "currentContainerId=`ssh prod \"docker ps --format=\\\"{{.Names}} {{.ID}}\\\" | grep \\\"base-nodejs-ts.d7r.io\\\" || echo \\\"\\\"\"` && currentContainerId=`echo $currentContainerId | grep -Po \"\\s.*?$\" | tr -d \"\\n\" || echo \"\"` && echo \"currentContainerId=$currentContainerId\" >> $GITHUB_ENV"
+        - 
+          name: "get current currentImageId"
+          run: "currentImageId=`ssh prod \"docker images --format=\\\"{{.Repository}} {{.ID}}\\\" | grep \\\"base-nodejs-ts.d7r.io\\\" || echo \\\"\\\"\"` && currentImageId=`echo $currentImageId | grep -Po \"\\s(.*?$)\" | tr -d \"\\n\" || echo \"\"` && echo \"currentImageId=$currentImageId\" >> $GITHUB_ENV"
+        - 
+          name: "get current currentContainerGithubHash"
+          run: "currentContainerGithubHash=`ssh prod \"docker ps --format=\\\"{{.Names}} {{.ID}}\\\" | grep \\\"base-nodejs-ts.d7r.io\\\" || echo \\\"\\\"\"` && currentContainerGithubHash=`echo $currentContainerGithubHash | grep -Po \"^.+?\\.\" || echo \"\"` && echo \"currentContainerGithubHash=$currentContainerGithubHash\" >> $GITHUB_ENV"
+        - 
+          name: "run"
+          run: "newContainerID=`ssh prod \"docker run --name ${{ env.ATTEMPTS }}.${{ github.sha }}.base-nodejs-ts.d7r.io.production.container  -p 3000 -d ${{ env.ATTEMPTS }}.${{ github.sha }}.base-nodejs-ts.d7r.io.production.image\"` && echo \"newContainerID=$newContainerID\" >> $GITHUB_ENV"
+        - 
+          name: "get container IP"
+          run: "newContainerIP=`ssh prod \"docker inspect -f \\\"{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}\\\" ${{ env.newContainerID }}\"` && echo \"newContainerIP=$newContainerIP\" >> $GITHUB_ENV"
+        - 
+          name: "get container PORT"
+          run: "newContainerPort=`ssh prod \"docker container ls | grep \\\"${{ env.ATTEMPTS }}.${{ github.sha }}.base-nodejs-ts.d7r.io.production\\\" | grep -Po \\\"\\d+/tcp \\\" | grep -Po \\\"\\d+\\\"\"` && echo \"newContainerPort=$newContainerPort\" >> $GITHUB_ENV"
+        - 
+          name: "Container is not running"
+          if: "${{ failure() }}"
+          run: "echo \"container is not running\" && exit 1"
+        - 
+          name: "setup nginx config"
+          run: "wget https://statics.dimaslz.dev/fito/nginx/static-config.nginx.tmpl -O nginx.tmpl\nexport SERVER_NAME=\"base-nodejs-ts.d7r.io\"\nexport SERVER_URL=\"http://${{ env.newContainerIP }}:${{ env.newContainerPort }}\"\nenvsubst < nginx.tmpl > base-nodejs-ts.d7r.io\nscp base-nodejs-ts.d7r.io prod:/etc/nginx/sites-enabled/base-nodejs-ts.d7r.io\nssh prod \"nginx -t && systemctl restart nginx\""
+        - 
+          name: "Container is not running"
+          if: "${{ failure() }}"
+          run: "echo \"container is not running\" && ssh prod \"docker rm -f ${{ env.newContainerID }}\" && exit 1"
+        - 
+          name: "Delete previews containers"
+          if: "${{ success() }}"
+          run: "[ ! -z \"${{ env.currentContainerId }}\" ] && ssh prod \"docker rm -f ${{ env.currentContainerId }}\" || echo \"\""
+        - 
+          name: "Delete previews images"
+          if: "${{ success() }}"
+          run: "[ ! -z \"${{ env.currentContainerId }}\" ] && ssh prod \"docker rmi -f ${{ env.currentImageId }}\" || echo \"\""
