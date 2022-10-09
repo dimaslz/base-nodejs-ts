@@ -15,6 +15,57 @@
     SSH_HOST: "${{ secrets.FITO_ENV_CONNECTION_HOST }}"
     ATTEMPTS: "${{ github.run_attempt }}"
   jobs: 
+    install-dependencies: 
+      name: "install dependencies"
+      runs-on: "ubuntu-latest"
+      steps: 
+        - 
+          name: "Checkout under $GITHUB_WORKSPACE"
+          uses: "actions/checkout@master"
+          with: 
+            ref: "master"
+        - 
+          name: "Set up NodeJS"
+          uses: "actions/setup-node@master"
+          with: 
+            node-version: "16.15.1"
+        - 
+          name: "Install yarn"
+          run: "npm install -g yarn"
+        - 
+          name: "Install dependencies"
+          run: "yarn install"
+        - 
+          name: "Cache"
+          uses: "actions/cache@main"
+          with: 
+            path: "./*"
+            key: "${{ github.sha }}-cache"
+    build-application: 
+      name: "build application"
+      runs-on: "ubuntu-latest"
+      needs: "install-dependencies"
+      steps: 
+        - 
+          name: "Set up NodeJS"
+          uses: "actions/setup-node@master"
+          with: 
+            node-version: "16.15.1"
+        - 
+          name: "Cache"
+          uses: "actions/cache@main"
+          with: 
+            path: "./*"
+            key: "${{ github.sha }}-cache"
+        - 
+          name: "Build application"
+          run: "yarn build"
+        - 
+          name: "Cache"
+          uses: "actions/cache@main"
+          with: 
+            path: "./*\n./build\nnode_modules\npackage.json"
+            key: "${{ github.sha }}-cache"
     create-and-push-docker-image: 
       name: "create and push docker image"
       runs-on: "ubuntu-latest"
